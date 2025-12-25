@@ -7,9 +7,12 @@ const {
     getDashboardStats,
     getExamNotifications,
     updateExamNotification,
+    deleteExamNotification,
     setGovFee,
     getSystemConfig,
-    searchStudent
+    searchStudent,
+    getStudentsByYear,
+    promoteStudents
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middlewares/authMiddleware');
 
@@ -21,8 +24,13 @@ router.post('/students', protect, authorize('admin'), createStudent);
 router.put('/students/:usn/fees', protect, authorize('admin'), updateStudentFees);
 router.post('/notifications', protect, authorize('admin', 'exam_head'), createExamNotification);
 router.put('/notifications/:id', protect, authorize('admin', 'exam_head'), updateExamNotification);
+router.delete('/notifications/:id', protect, authorize('admin', 'exam_head'), deleteExamNotification);
 // Publicly accessible for now, but usually protected for students to get "My" notifications
 router.get('/notifications', protect, getExamNotifications);
 router.get('/stats', protect, authorize('admin', 'principal', 'exam_head'), getDashboardStats);
+
+// Promotion Routes
+router.get('/students/year/:year', protect, authorize('admin'), getStudentsByYear);
+router.post('/students/promote', protect, authorize('admin'), promoteStudents);
 
 module.exports = router;

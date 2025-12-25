@@ -73,7 +73,7 @@ const createStudent = async (req, res) => {
 const updateStudentFees = async (req, res) => {
     try {
         const {
-            collegeFeeDue, transportFeeDue, lastSemDues, status, transportOpted, // Direct updates
+            collegeFeeDue, transportFeeDue, hostelFeeDue, placementFeeDue, lastSemDues, status, transportOpted, // Direct updates
             feeRecordId, amount, mode, reference, // Payment Transaction
             eligibilityOverride // New field
         } = req.body;
@@ -125,6 +125,12 @@ const updateStudentFees = async (req, res) => {
             if (record.feeType === 'transport') {
                 student.transportFeeDue = Math.max(0, (student.transportFeeDue || 0) - paymentAmount);
             }
+            if (record.feeType === 'hostel') {
+                student.hostelFeeDue = Math.max(0, (student.hostelFeeDue || 0) - paymentAmount);
+            }
+            if (record.feeType === 'placement') {
+                student.placementFeeDue = Math.max(0, (student.placementFeeDue || 0) - paymentAmount);
+            }
         }
 
         // 2. Handle Manual Direct Updates
@@ -166,9 +172,53 @@ const updateStudentFees = async (req, res) => {
             }
         }
 
+        if (hostelFeeDue !== undefined) {
+            student.hostelFeeDue = hostelFeeDue;
+            if (hostelFeeDue === 0 && student.feeRecords) {
+                student.feeRecords.forEach(r => {
+                    if (r.feeType === 'hostel' && r.status !== 'paid') {
+                        r.status = 'paid';
+                        r.amountPaid = r.amountDue;
+                        r.transactions.push({
+                            amount: r.amountDue - (r.amountPaid || 0),
+                            date: new Date(),
+                            mode: 'Auto-Clear',
+                            reference: 'Admin Marked Paid'
+                        });
+                    }
+                });
+            }
+        }
+
+        if (placementFeeDue !== undefined) {
+            student.placementFeeDue = placementFeeDue;
+            if (placementFeeDue === 0 && student.feeRecords) {
+                student.feeRecords.forEach(r => {
+                    if (r.feeType === 'placement' && r.status !== 'paid') {
+                        r.status = 'paid';
+                        r.amountPaid = r.amountDue;
+                        r.transactions.push({
+                            amount: r.amountDue - (r.amountPaid || 0),
+                            date: new Date(),
+                            mode: 'Auto-Clear',
+                            reference: 'Admin Marked Paid'
+                        });
+                    }
+                });
+            }
+        }
+
+        // 3. Update Annual Fee Persistence (If provided)
+        const { annualCollegeFee, annualTransportFee, annualHostelFee, annualPlacementFee } = req.body;
+        if (annualCollegeFee !== undefined) student.annualCollegeFee = annualCollegeFee;
+        if (annualTransportFee !== undefined) student.annualTransportFee = annualTransportFee;
+        if (annualHostelFee !== undefined) student.annualHostelFee = annualHostelFee;
+        if (annualPlacementFee !== undefined) student.annualPlacementFee = annualPlacementFee;
+
         if (lastSemDues !== undefined) student.lastSemDues = lastSemDues;
         if (status !== undefined) student.status = status;
         if (transportOpted !== undefined) student.transportOpted = transportOpted;
+
         if (eligibilityOverride !== undefined) student.eligibilityOverride = eligibilityOverride;
 
         const updatedStudent = await student.save();
@@ -250,6 +300,7 @@ const setGovFee = async (req, res) => {
 
             for (const student of students) {
                 student.collegeFeeDue = newAmount;
+                student.annualCollegeFee = newAmount; // Persist for next year
                 updateSemesterRecords(student, newAmount);
                 await student.save();
             }
@@ -269,44 +320,20 @@ const setGovFee = async (req, res) => {
             const student = await Student.findOne({ usn: usn, quota: 'management' });
             if (!student) return res.status(404).json({ message: 'Student not found' });
 
-            student.collegeFeeDue = (student.collegeFeeDue || 0) + newAmount; // Logic check: is this replace or add? Assuming setGovFee implies "Set Fee" but old logic did +=. Let's assume for management it's usually "Add this years fee". 
-            // Wait, for management, usually we set the fee for the year. 
-            // The previous logic was: student.collegeFeeDue = (student.collegeFeeDue || 0) - oldDue + parseInt(amount);
-            // Let's stick to "setting" the fee for this year.
+            // Set the fee (Replace or Add - for Management usually we set the agreed annual fee)
+            student.collegeFeeDue = newAmount;
+            student.annualCollegeFee = newAmount; // Persist for next year
 
-            // Recalculate total due based on ALL years/semesters? 
-            // Or just update the specific year records?
-            // "management" fee passing logic usually implies "Set the fee for THIS year". 
-            // So we should find if there was previous fee for this year, remove it from total, add new.
-
-            // Simplified: Update the semester records for this year to match newAmount
-            // And ensure top level collegeFeeDue matches sum of all feeRecords amountDue - sum of amountPaid?
-            // Or just allow the helper to handle the records, and we manually adjust the top level.
-
-            // IMPORTANT: If we are "Setting" the fee for year X, we should overwrite whatever was there for year X.
-            // The previous code had complex logic. Let's simplify:
-            // 1. Calculate the difference between new fee and old fee for this year.
-            // 2. Adjust total collegeFeeDue by that diff.
-            // 3. Update records.
-
-            // Find existing due for this year to calc diff
-            const existingRecs = student.feeRecords.filter(r => r.year === year && r.feeType === 'college');
-            const oldYearDue = existingRecs.reduce((sum, r) => sum + r.amountDue, 0);
-
-            student.collegeFeeDue = (student.collegeFeeDue || 0) - oldYearDue + newAmount;
             updateSemesterRecords(student, newAmount);
-
             await student.save();
-            res.json({ message: `Fee Allocated`, student });
 
-        } else {
-            res.status(400).json({ message: 'Invalid Quota' });
+            res.json({ message: `Management Fee Assigned for ${usn}` });
         }
-
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
+
 
 // @desc    Get System Config
 // @route   GET /api/admin/config
@@ -378,6 +405,24 @@ const updateExamNotification = async (req, res) => {
 
         const updatedNotification = await notification.save();
         res.json(updatedNotification);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Delete Exam Notification
+// @route   DELETE /api/admin/notifications/:id
+// @access  Private (Exam Head)
+const deleteExamNotification = async (req, res) => {
+    try {
+        const notification = await ExamNotification.findById(req.params.id);
+
+        if (!notification) {
+            return res.status(404).json({ message: 'Notification not found' });
+        }
+
+        await notification.deleteOne();
+        res.json({ message: 'Notification removed' });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -459,14 +504,171 @@ const getDashboardStats = async (req, res) => {
     }
 };
 
+// @desc    Get Students by Year
+// @route   GET /api/admin/students/year/:year
+// @access  Private (Admin)
+const getStudentsByYear = async (req, res) => {
+    try {
+        const { year } = req.params;
+        const students = await Student.find({ currentYear: year, status: 'active' })
+            .populate('user', 'name email')
+            .sort({ usn: 1 });
+        res.json(students);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Promote Students
+// @route   POST /api/admin/students/promote
+// @access  Private (Admin)
+const promoteStudents = async (req, res) => {
+    try {
+        const { currentYear } = req.body;
+        const year = parseInt(currentYear);
+
+        if (!year || isNaN(year)) {
+            return res.status(400).json({ message: 'Valid Current Year is required' });
+        }
+
+        if (year === 4) {
+            // Promote 4th to Graduated (Strict Check)
+            const students = await Student.find({ currentYear: 4, status: 'active' });
+
+            let graduatedCount = 0;
+            let skippedCount = 0;
+
+            for (const student of students) {
+                const totalDue = (student.collegeFeeDue || 0) +
+                    (student.transportFeeDue || 0) +
+                    (student.hostelFeeDue || 0) +
+                    (student.placementFeeDue || 0);
+
+                if (totalDue > 0) {
+                    skippedCount++;
+                    continue; // Skip graduation if dues pending
+                }
+
+                student.status = 'graduated';
+                await student.save();
+                graduatedCount++;
+            }
+
+            return res.json({
+                message: `Graduation Complete: Graduated ${graduatedCount}, Skipped ${skippedCount} due to pending fees.`,
+                graduated: graduatedCount,
+                skipped: skippedCount
+            });
+        } else {
+            // Promote 1->2, 2->3, 3->4
+            const students = await Student.find({ currentYear: year, status: 'active' });
+
+            let promotedCount = 0;
+            let skippedCount = 0;
+
+            for (const student of students) {
+                // strict Promotion Check: ALL Dues must be 0
+                // Check 1: Aggregate Dues
+                const totalAggregateDue = (student.collegeFeeDue || 0) +
+                    (student.transportFeeDue || 0) +
+                    (student.hostelFeeDue || 0) +
+                    (student.placementFeeDue || 0);
+
+                // Check 2: Fee Records for Current Year (Source of Truth)
+                const hasPendingRecords = student.feeRecords && student.feeRecords.some(r => {
+                    return r.year === student.currentYear &&
+                        (r.status !== 'paid' || (r.amountPaid || 0) < r.amountDue);
+                });
+
+                if (totalAggregateDue > 0 || hasPendingRecords) {
+                    skippedCount++;
+                    continue; // Skip this student
+                }
+
+                const nextYear = student.currentYear + 1;
+                student.currentYear = nextYear;
+
+                // Initialize Fee Records for the NEW Year (Sem A & B) using PERMANENT Annual Fees
+                const semA = (nextYear * 2) - 1;
+                const semB = nextYear * 2;
+
+                const addRecord = (type, annualAmount) => {
+                    const amount = Number(annualAmount) || 0;
+                    const amountA = Math.ceil(amount / 2);
+                    const amountB = amount - amountA;
+
+                    // Sem A
+                    student.feeRecords.push({
+                        year: nextYear,
+                        semester: semA,
+                        feeType: type,
+                        amountDue: amountA,
+                        status: amountA === 0 ? 'paid' : 'pending',
+                        amountPaid: 0,
+                        transactions: []
+                    });
+                    // Sem B
+                    student.feeRecords.push({
+                        year: nextYear,
+                        semester: semB,
+                        feeType: type,
+                        amountDue: amountB,
+                        status: amountB === 0 ? 'paid' : 'pending',
+                        amountPaid: 0,
+                        transactions: []
+                    });
+                };
+
+                // 1. College Fee
+                addRecord('college', student.annualCollegeFee);
+                // Update Top Level Due
+                student.collegeFeeDue = (student.annualCollegeFee || 0);
+
+                // 2. Transport Fee (If opted)
+                if (student.transportOpted) {
+                    addRecord('transport', student.annualTransportFee);
+                    student.transportFeeDue = (student.annualTransportFee || 0);
+                }
+
+                // 3. Hostel Fee (If opted)
+                if (student.hostelOpted) {
+                    addRecord('hostel', student.annualHostelFee);
+                    student.hostelFeeDue = (student.annualHostelFee || 0);
+                }
+
+                // 4. Placement Fee (If opted)
+                if (student.placementOpted) {
+                    addRecord('placement', student.annualPlacementFee);
+                    student.placementFeeDue = (student.annualPlacementFee || 0);
+                }
+
+                await student.save();
+                promotedCount++;
+            }
+
+            return res.json({
+                message: `Promotion Complete: Promoted ${promotedCount}, Skipped ${skippedCount} due to pending fees.`,
+                promoted: promotedCount,
+                skipped: skippedCount
+            });
+        }
+
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     createStudent,
     updateStudentFees,
     createExamNotification,
     updateExamNotification,
+    deleteExamNotification,
     getExamNotifications,
     getDashboardStats,
     setGovFee,
     getSystemConfig,
-    searchStudent
+    searchStudent,
+    getStudentsByYear,
+    promoteStudents
 };

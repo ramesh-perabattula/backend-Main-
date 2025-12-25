@@ -27,7 +27,7 @@ const searchStudentForTransport = async (req, res) => {
 // @access  Private (Transport Dept)
 const updateTransportDetails = async (req, res) => {
     try {
-        const { transportOpted, transportFeeDue } = req.body;
+        const { transportOpted, transportFeeDue, markSemPaid, transportRoute } = req.body;
         const student = await Student.findOne({ usn: req.params.usn });
 
         if (!student) {
@@ -35,6 +35,7 @@ const updateTransportDetails = async (req, res) => {
         }
 
         if (transportOpted !== undefined) student.transportOpted = transportOpted;
+        if (transportRoute !== undefined) student.transportRoute = transportRoute;
 
         if (transportFeeDue !== undefined) {
             const newDue = Number(transportFeeDue);
@@ -92,6 +93,39 @@ const updateTransportDetails = async (req, res) => {
                         }
                     }
                 });
+            }
+        }
+
+        // HANDLE SEMESTER-WISE PAYMENT
+        if (markSemPaid) {
+            const semesterToPay = Number(markSemPaid);
+            // Find record by semester (unique 1-8) irrespective of current year to allow clearing backlogs
+            const recordIndex = student.feeRecords.findIndex(r => r.semester === semesterToPay && r.feeType === 'transport');
+
+            if (recordIndex !== -1) {
+                const record = student.feeRecords[recordIndex];
+                const amountToPay = record.amountDue - (record.amountPaid || 0);
+
+                if (amountToPay > 0) {
+                    // Update Record
+                    record.amountPaid = record.amountDue;
+                    record.status = 'paid';
+
+                    record.transactions.push({
+                        amount: amountToPay,
+                        date: new Date(),
+                        mode: 'Transport Dept',
+                        reference: `Semester ${semesterToPay} Payment`
+                    });
+
+                    // Update Top Level Due
+                    student.transportFeeDue = Math.max(0, (student.transportFeeDue || 0) - amountToPay);
+
+                    // Explicitly mark modified for Mongoose mixed types/arrays if needed
+                    student.markModified('feeRecords');
+                }
+            } else {
+                return res.status(404).json({ message: `Fee Record for Semester ${semesterToPay} not found` });
             }
         }
 

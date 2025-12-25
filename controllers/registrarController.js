@@ -11,10 +11,13 @@ const createStudent = async (req, res) => {
             username, password, name, department, currentYear,
             quota, entry, email,
             transportOpted, // Boolean
+            transportRoute, // String - Added
             hostelOpted, // Boolean - Added for Hostel
+            placementOpted, // Boolean - Added
             assignedCollegeFee, // For Management Quota
             assignedTransportFee, // If transportOpted is true
-            assignedHostelFee // If hostelOpted is true
+            assignedHostelFee, // If hostelOpted is true
+            assignedPlacementFee // If placementOpted is true
         } = req.body;
 
         // 1. Create User
@@ -32,21 +35,31 @@ const createStudent = async (req, res) => {
         // 2. Determine fees
         let initialCollegeFee = 0;
         if (quota === 'management') {
-            initialCollegeFee = assignedCollegeFee || 0;
+            initialCollegeFee = assignedCollegeFee ? Number(assignedCollegeFee) : 0;
         } else {
-            // Fetch Default Gov Fee
+            // GOV Quota is strictly 0 as per requirement
+            initialCollegeFee = 0;
             // Note: If dynamic year fee logic exists, we should technically query that, 
             // but for now we fallback to global default or 0.
-            const config = await SystemConfig.findOne({ key: 'default_gov_fee' });
-            initialCollegeFee = config ? config.value : 0;
+            // const config = await SystemConfig.findOne({ key: 'default_gov_fee' });
+            // initialCollegeFee = config ? config.value : 0;
+        }
+
+        // Mutual Exclusivity Check (Hostel vs Transport)
+        let finalTransportOpted = transportOpted;
+        let finalHostelOpted = hostelOpted;
+
+        if (finalTransportOpted && finalHostelOpted) {
+            // If both are true, we need to pick one. Assuming Frontend handles this, but for safety:
+            // prioritize Hostel if it's explicitly set to true
+            finalTransportOpted = false;
         }
 
         let initialTransportFee = 0;
-        if (transportOpted) {
-            initialTransportFee = assignedTransportFee || 0;
+        if (finalTransportOpted) {
+            initialTransportFee = assignedTransportFee ? Number(assignedTransportFee) : 0;
         }
 
-        // 3. Create Student Profile
         // 3. Create Student Profile
         const currentYearNum = parseInt(currentYear) || 1;
         const semA = (currentYearNum * 2) - 1;
@@ -97,8 +110,8 @@ const createStudent = async (req, res) => {
         }
 
         let initialHostelFee = 0;
-        if (hostelOpted) {
-            initialHostelFee = assignedHostelFee || 0;
+        if (finalHostelOpted) {
+            initialHostelFee = assignedHostelFee ? Number(assignedHostelFee) : 0;
         }
 
         // Hostel Fee Split
@@ -122,6 +135,33 @@ const createStudent = async (req, res) => {
             });
         }
 
+        let initialPlacementFee = 0;
+        if (placementOpted) {
+            initialPlacementFee = assignedPlacementFee ? Number(assignedPlacementFee) : 0;
+            // Placement Fee usually one-time per year or purely one time. 
+            // Splitting it per sem for consistency with other fees, or keep as one chunk?
+            // Let's split it per sem for now to be consistent
+            if (initialPlacementFee > 0) {
+                const splitPlace = Math.ceil(initialPlacementFee / 2);
+                feeRecords.push({
+                    year: currentYearNum,
+                    semester: semA,
+                    feeType: 'placement',
+                    amountDue: splitPlace,
+                    status: 'pending',
+                    transactions: []
+                });
+                feeRecords.push({
+                    year: currentYearNum,
+                    semester: semB,
+                    feeType: 'placement',
+                    amountDue: initialPlacementFee - splitPlace,
+                    status: 'pending',
+                    transactions: []
+                });
+            }
+        }
+
         const student = await Student.create({
             user: user._id,
             usn: username,
@@ -129,11 +169,21 @@ const createStudent = async (req, res) => {
             currentYear: currentYearNum,
             quota,
             entry,
-            transportOpted: transportOpted || false,
-            hostelOpted: hostelOpted || false,
+            transportOpted: finalTransportOpted || false,
+            transportRoute: finalTransportOpted ? transportRoute : '',
+            hostelOpted: finalHostelOpted || false,
+            placementOpted: placementOpted || false,
             collegeFeeDue: initialCollegeFee, // Keep total for high-level view
             transportFeeDue: initialTransportFee,
             hostelFeeDue: initialHostelFee,
+            placementFeeDue: initialPlacementFee,
+
+            // Persist Annual Fees
+            annualCollegeFee: initialCollegeFee,
+            annualTransportFee: initialTransportFee,
+            annualHostelFee: initialHostelFee,
+            annualPlacementFee: initialPlacementFee,
+
             feeRecords: feeRecords
         });
 

@@ -1,139 +1,96 @@
 const Student = require('../models/Student');
 
-// @desc    Assign Hostel Fee to a Student
-// @route   POST /api/hostel/fees/assign
-// @access  Private (Hostel Warden, Admin)
-const assignHostelFee = async (req, res) => {
+// @desc    Search for a student by USN
+// @access  Private (Hostel Warden)
+const searchStudent = async (req, res) => {
     try {
-        const { usn, amount } = req.body;
+        const { query } = req.query;
+        if (!query) {
+            return res.status(400).json({ message: 'Query parameter is required' });
+        }
 
-        const student = await Student.findOne({ usn });
+        const student = await Student.findOne({ usn: { $regex: query, $options: 'i' } })
+            .populate('user', 'name email photoUrl');
+
         if (!student) {
             return res.status(404).json({ message: 'Student not found' });
         }
 
-        if (!student.hostelOpted) { // If not already opted, enable it
-            student.hostelOpted = true;
-        }
-
-        // Add Fee Record
-        student.feeRecords.push({
-            year: student.currentYear,
-            semester: student.currentYear * 2 - 1, // Defaulting to odd sem approximation
-            feeType: 'hostel',
-            amountDue: Number(amount),
-            status: 'pending',
-            transactions: []
-        });
-
-        // Update Top Level Due
-        student.hostelFeeDue += Number(amount);
-
-        await student.save();
-        res.json({ message: 'Hostel fee assigned successfully', student });
-
+        res.json(student);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
 
-// @desc    Mark Hostel Fee as Paid
-// @route   POST /api/hostel/fees/pay
-// @access  Private (Hostel Warden, Admin)
-const markFeePaid = async (req, res) => {
+// @desc    Update Hostel Fee Details
+// @access  Private (Hostel Warden)
+const updateHostelDetails = async (req, res) => {
     try {
-        const { usn, amount, mode, reference } = req.body;
+        const { hostelFeeDue, markSemPaid } = req.body;
+        const student = await Student.findOne({ usn: req.params.usn });
 
-        const student = await Student.findOne({ usn });
         if (!student) {
             return res.status(404).json({ message: 'Student not found' });
         }
 
-        const feeRecord = student.feeRecords.find(r => r.feeType === 'hostel' && r.status !== 'paid');
-        if (!feeRecord) {
-            return res.status(400).json({ message: 'No pending hostel fee record found for this student.' });
+        if (hostelFeeDue !== undefined) {
+            const newDue = Number(hostelFeeDue);
+            const difference = (student.hostelFeeDue || 0) - newDue;
+
+            if (difference > 0) {
+                student.feeRecords.push({
+                    year: student.currentYear,
+                    semester: student.currentYear * 2,
+                    feeType: 'hostel',
+                    amountDue: 0,
+                    amountPaid: difference,
+                    status: 'paid',
+                    transactions: [{
+                        amount: difference,
+                        date: new Date(),
+                        mode: 'Hostel Office',
+                        reference: 'Manual Adjustment'
+                    }]
+                });
+            }
+            student.hostelFeeDue = newDue;
         }
 
-        const paidAmt = Number(amount);
-        feeRecord.amountPaid += paidAmt;
+        // HANDLE SEMESTER-WISE PAYMENT
+        if (markSemPaid) {
+            const semesterToPay = Number(markSemPaid);
+            const recordIndex = student.feeRecords.findIndex(r => r.semester === semesterToPay && r.feeType === 'hostel');
 
-        feeRecord.transactions.push({
-            amount: paidAmt,
-            mode: mode || 'CASH',
-            reference: reference || `HOSTEL-${Date.now()}`,
-            date: Date.now()
-        });
+            if (recordIndex !== -1) {
+                const record = student.feeRecords[recordIndex];
+                const amountToPay = record.amountDue - (record.amountPaid || 0);
 
-        if (feeRecord.amountPaid >= feeRecord.amountDue) {
-            feeRecord.status = 'paid';
-        } else {
-            feeRecord.status = 'partial';
+                if (amountToPay > 0) {
+                    record.amountPaid = record.amountDue;
+                    record.status = 'paid';
+
+                    record.transactions.push({
+                        amount: amountToPay,
+                        date: new Date(),
+                        mode: 'Hostel Office',
+                        reference: `Semester ${semesterToPay} Payment`
+                    });
+
+                    student.hostelFeeDue = Math.max(0, (student.hostelFeeDue || 0) - amountToPay);
+                    student.markModified('feeRecords');
+                }
+            } else {
+                return res.status(404).json({ message: `Fee Record for Semester ${semesterToPay} not found` });
+            }
         }
 
-        // Update Top Level
-        student.hostelFeeDue = Math.max(0, student.hostelFeeDue - paidAmt);
-
-        await student.save();
-
-        res.json({ message: 'Payment recorded', student });
+        const updatedStudent = await student.save();
+        res.json(updatedStudent);
 
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        console.error("Hostel Update Error:", error);
+        res.status(500).json({ message: error.message || 'Server Error' });
     }
 };
 
-// @desc    Disable Hostel for a Student
-// @route   POST /api/hostel/disable
-// @access  Private (Hostel Warden, Admin)
-const disableHostel = async (req, res) => {
-    try {
-        const { usn } = req.body;
-        const student = await Student.findOne({ usn });
-
-        if (!student) return res.status(404).json({ message: 'Student not found' });
-
-        student.hostelOpted = false;
-        // Optional: Clear dues? The prompt said "disable the hostel... and make same as placement officer to deduct".
-        // Usually disabling means they left. We might keep the record but stop new fees.
-        // I'll just set the flag to false.
-
-        await student.save();
-        res.json({ message: `Hostel disabled for ${student.name}` });
-
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
-
-// @desc    Search Student for Hostel
-// @route   GET /api/hostel/student/:usn
-// @access  Private
-const getStudentStatus = async (req, res) => {
-    try {
-        const { usn } = req.params;
-        const student = await Student.findOne({ usn }).select('usn name hostelOpted hostelFeeDue feeRecords');
-
-        if (!student) return res.status(404).json({ message: 'Student not found' });
-
-        const pendingRecords = student.feeRecords.filter(r => r.feeType === 'hostel');
-
-        res.json({
-            usn: student.usn,
-            name: student.name, // Since name is populated in controller usually, wait Student model doesn't have name directly it has user ref.
-            // Wait, Student model has `user` ref.
-            // I need to populate user to get name.
-            hostelOpted: student.hostelOpted,
-            hostelFeeDue: student.hostelFeeDue,
-            pendingRecords
-        });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-}
-
-module.exports = {
-    assignHostelFee,
-    markFeePaid,
-    disableHostel,
-    getStudentStatus
-};
+module.exports = { searchStudent, updateHostelDetails };

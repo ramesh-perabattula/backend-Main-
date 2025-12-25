@@ -11,11 +11,21 @@ const studentSchema = mongoose.Schema({
 
     // Fees Due Status
     transportOpted: { type: Boolean, default: false },
+    transportRoute: { type: String, default: '' }, // Added Transport Route
     hostelOpted: { type: Boolean, default: false }, // Added Hostel Opted
+    placementOpted: { type: Boolean, default: false }, // Added Placement Opted
+
     collegeFeeDue: { type: Number, default: 0 },
     transportFeeDue: { type: Number, default: 0 },
     hostelFeeDue: { type: Number, default: 0 }, // Added Hostel Fee Due
+    placementFeeDue: { type: Number, default: 0 }, // Added Placement Fee Due
     lastSemDues: { type: Number, default: 0 },
+
+    // Persistent Annual Fee Structure (Base Fee for subsequent years)
+    annualCollegeFee: { type: Number, default: 0 },
+    annualTransportFee: { type: Number, default: 0 },
+    annualHostelFee: { type: Number, default: 0 },
+    annualPlacementFee: { type: Number, default: 0 },
 
     // Professional Fee Management (Ledger)
     feeRecords: [{

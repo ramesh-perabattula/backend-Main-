@@ -6,7 +6,7 @@ const userSchema = mongoose.Schema({
     password: { type: String, required: true },
     role: {
         type: String,
-        enum: ['student', 'admin', 'principal', 'exam_head', 'transport_dept', 'registrar', 'librarian', 'placement_officer', 'hostel_warden'],
+        enum: ['student', 'admin', 'principal', 'exam_head', 'transport_dept', 'registrar', 'librarian', 'placement_officer', 'hostel_manager', 'admission_officer'],
         required: true
     },
     name: { type: String, required: true },
@@ -23,9 +23,9 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
 };
 
 // Hash password before saving
-userSchema.pre('save', async function (next) {
+userSchema.pre('save', async function () {
     if (!this.isModified('password')) {
-        next();
+        return;
     }
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);

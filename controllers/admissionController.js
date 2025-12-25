@@ -1,7 +1,7 @@
 const Student = require('../models/Student');
 
 // @desc    Search for a student by USN
-// @access  Private (Placement Officer)
+// @access  Private (Admission Dept)
 const searchStudent = async (req, res) => {
     try {
         const { query } = req.query;
@@ -22,66 +22,67 @@ const searchStudent = async (req, res) => {
     }
 };
 
-// @desc    Update Placement Fee Details
-// @access  Private (Placement Officer)
-const updatePlacementDetails = async (req, res) => {
+// @desc    Update College/Admission Fee Details
+// @access  Private (Admission Dept)
+const updateAdmissionDetails = async (req, res) => {
     try {
-        const { placementFeeDue, markSemPaid } = req.body;
+        const { collegeFeeDue, markSemPaid } = req.body;
         const student = await Student.findOne({ usn: req.params.usn });
 
         if (!student) {
             return res.status(404).json({ message: 'Student not found' });
         }
 
-        if (placementFeeDue !== undefined) {
-            const newDue = Number(placementFeeDue);
-            // Simple logic: if reducing due, assume paid. 
-            // Better logic: require explicit payment action vs adjustment. 
-            // For consistence with transport/admission, assuming manual adjustment or payment via this route.
-
-            const difference = (student.placementFeeDue || 0) - newDue;
+        if (collegeFeeDue !== undefined) {
+            const newDue = Number(collegeFeeDue);
+            const difference = (student.collegeFeeDue || 0) - newDue;
 
             if (difference > 0) {
                 // Payment made
                 student.feeRecords.push({
                     year: student.currentYear,
-                    semester: student.currentYear * 2,
-                    feeType: 'placement',
-                    amountDue: 0,
+                    semester: student.currentYear * 2, // Approximate
+                    feeType: 'college',
+                    amountDue: 0, // Not strictly tracking due here in simple mode
                     amountPaid: difference,
                     status: 'paid',
                     transactions: [{
                         amount: difference,
                         date: new Date(),
-                        mode: 'Placement Office',
+                        mode: 'Admission Dept', // Changed source
                         reference: 'Manual Adjustment'
                     }]
                 });
             }
-            student.placementFeeDue = newDue;
+            student.collegeFeeDue = newDue;
         }
 
         // HANDLE SEMESTER-WISE PAYMENT
         if (markSemPaid) {
             const semesterToPay = Number(markSemPaid);
-            const recordIndex = student.feeRecords.findIndex(r => r.semester === semesterToPay && r.feeType === 'placement');
+            // Find record by semester (unique 1-8) irrespective of current year to allow clearing backlogs
+            const recordIndex = student.feeRecords.findIndex(r => r.semester === semesterToPay && r.feeType === 'college');
 
             if (recordIndex !== -1) {
                 const record = student.feeRecords[recordIndex];
                 const amountToPay = record.amountDue - (record.amountPaid || 0);
 
                 if (amountToPay > 0) {
+                    // Update Record
                     record.amountPaid = record.amountDue;
                     record.status = 'paid';
 
                     record.transactions.push({
                         amount: amountToPay,
                         date: new Date(),
-                        mode: 'Placement Office',
+                        mode: 'Admission Dept',
                         reference: `Semester ${semesterToPay} Payment`
                     });
 
-                    student.placementFeeDue = Math.max(0, (student.placementFeeDue || 0) - amountToPay);
+                    // Update Top Level Due
+                    student.collegeFeeDue = Math.max(0, (student.collegeFeeDue || 0) - amountToPay);
+
+                    // Explicitly mark modified for Mongoose mixed types/arrays if needed
                     student.markModified('feeRecords');
                 }
             } else {
@@ -93,9 +94,9 @@ const updatePlacementDetails = async (req, res) => {
         res.json(updatedStudent);
 
     } catch (error) {
-        console.error("Placement Update Error:", error);
+        console.error("Admission Update Error:", error);
         res.status(500).json({ message: error.message || 'Server Error' });
     }
 };
 
-module.exports = { searchStudent, updatePlacementDetails };
+module.exports = { searchStudent, updateAdmissionDetails };
