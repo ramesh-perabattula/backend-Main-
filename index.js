@@ -2,6 +2,8 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const connectDB = require('./config/db');
+const compression = require('compression');
+const rateLimiter = require('./middlewares/rateLimiter');
 
 // Load env vars
 dotenv.config();
@@ -11,16 +13,25 @@ connectDB();
 
 const app = express();
 
+app.disable('x-powered-by'); // Reduce header size and hide tech stack
+
 // Middleware
 app.use(express.json());
+app.use(compression()); // Compress responses
 app.use(cors());
 
-// Debug Middleware
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    console.log('Headers:', req.headers['authorization'] ? 'Auth Header Present' : 'No Auth Header');
-    next();
-});
+// Rate Limiter
+app.set('trust proxy', 1);
+app.use(rateLimiter);
+
+// Debug Middleware (Development only)
+if (process.env.NODE_ENV === 'development') {
+    app.use((req, res, next) => {
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+        console.log('Headers:', req.headers['authorization'] ? 'Auth Header Present' : 'No Auth Header');
+        next();
+    });
+}
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
