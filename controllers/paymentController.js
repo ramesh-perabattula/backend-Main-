@@ -4,6 +4,8 @@ const Payment = require('../models/Payment');
 const Student = require('../models/Student');
 const ExamNotification = require('../models/ExamNotification');
 
+const LibraryRecord = require('../models/LibraryRecord');
+
 // @desc    Create Razorpay Order
 // @route   POST /api/payments/create-order
 // @access  Private (Student)
@@ -12,13 +14,30 @@ const createOrder = async (req, res) => {
         const { amount, paymentType, examNotificationId } = req.body; // Accept examNotificationId
 
         // Basic Validation for Exam Fee if ID provided
-        if (paymentType === 'exam_fee' && examNotificationId) {
-            const notification = await ExamNotification.findById(examNotificationId);
-            if (notification) {
-                // Check if Late Fee applies
-                // Logic: If today > lastDateWithoutFine, Effective Fee = examFee + lateFee
-                // We can enforce this here or just trust frontend. 
-                // Let's just log for now to avoid blocking if dates are tricky.
+        if (paymentType === 'exam_fee') {
+            // 1. Check Library Dues
+            const student = await Student.findOne({ user: req.user._id });
+            if (!student) return res.status(404).json({ message: 'Student verification failed' });
+
+            const pendingBooks = await LibraryRecord.countDocuments({
+                student: student._id,
+                status: { $ne: 'returned' }
+            });
+
+            if (pendingBooks > 0) {
+                return res.status(400).json({
+                    message: "You cannot pay Exam Fees with pending Library Books. Please return them first."
+                });
+            }
+
+            if (examNotificationId) {
+                const notification = await ExamNotification.findById(examNotificationId);
+                if (notification) {
+                    // Check if Late Fee applies
+                    // Logic: If today > lastDateWithoutFine, Effective Fee = examFee + lateFee
+                    // We can enforce this here or just trust frontend. 
+                    // Let's just log for now to avoid blocking if dates are tricky.
+                }
             }
         }
 

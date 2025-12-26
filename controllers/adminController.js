@@ -2,6 +2,7 @@ const User = require('../models/User');
 const Student = require('../models/Student');
 const ExamNotification = require('../models/ExamNotification');
 const SystemConfig = require('../models/SystemConfig');
+const LibraryRecord = require('../models/LibraryRecord');
 
 // @desc    Create a new student with user profile
 // @route   POST /api/admin/students
@@ -544,9 +545,11 @@ const promoteStudents = async (req, res) => {
                     (student.hostelFeeDue || 0) +
                     (student.placementFeeDue || 0);
 
-                if (totalDue > 0) {
+                const pendingBooks = await LibraryRecord.countDocuments({ student: student._id, status: { $ne: 'returned' } });
+
+                if (totalDue > 0 || pendingBooks > 0) {
                     skippedCount++;
-                    continue; // Skip graduation if dues pending
+                    continue; // Skip graduation if dues pending or books not returned
                 }
 
                 student.status = 'graduated';
@@ -555,7 +558,7 @@ const promoteStudents = async (req, res) => {
             }
 
             return res.json({
-                message: `Graduation Complete: Graduated ${graduatedCount}, Skipped ${skippedCount} due to pending fees.`,
+                message: `Graduation Complete: Graduated ${graduatedCount}, Skipped ${skippedCount} due to pending fees or library dues.`,
                 graduated: graduatedCount,
                 skipped: skippedCount
             });
@@ -580,7 +583,10 @@ const promoteStudents = async (req, res) => {
                         (r.status !== 'paid' || (r.amountPaid || 0) < r.amountDue);
                 });
 
-                if (totalAggregateDue > 0 || hasPendingRecords) {
+                // Check 3: Library Dues
+                const pendingBooks = await LibraryRecord.countDocuments({ student: student._id, status: { $ne: 'returned' } });
+
+                if (totalAggregateDue > 0 || hasPendingRecords || pendingBooks > 0) {
                     skippedCount++;
                     continue; // Skip this student
                 }
@@ -647,7 +653,7 @@ const promoteStudents = async (req, res) => {
             }
 
             return res.json({
-                message: `Promotion Complete: Promoted ${promotedCount}, Skipped ${skippedCount} due to pending fees.`,
+                message: `Promotion Complete: Promoted ${promotedCount}, Skipped ${skippedCount} due to pending fees or library dues.`,
                 promoted: promotedCount,
                 skipped: skippedCount
             });
