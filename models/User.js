@@ -15,6 +15,8 @@ const userSchema = mongoose.Schema({
 }, { timestamps: true });
 
 // Add Indexes for performance
+userSchema.index({ username: 1 }); // Index for faster login lookups
+userSchema.index({ email: 1 }); // Index for email lookups
 userSchema.index({ name: 1 }); // Useful for searching users by name
 
 // Check if password matches

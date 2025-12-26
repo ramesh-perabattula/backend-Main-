@@ -49,4 +49,8 @@ const studentSchema = mongoose.Schema({
     // Logic will primarily calculate this dynamically
 }, { timestamps: true });
 
+// Indexes for faster queries
+studentSchema.index({ usn: 1 });
+studentSchema.index({ user: 1 });
+
 module.exports = mongoose.model('Student', studentSchema);
